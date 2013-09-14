@@ -4,6 +4,7 @@ package org.apache.hadoop;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.util.StringTokenizer;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -18,22 +19,14 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.GenericOptionsParser;
 
-/**
- * Created with IntelliJ IDEA.
- * User: pavel
- * Date: 09.09.13
- * Time: 22:10
- * To change this template use File | Settings | File Templates.
- */
+
 public class VecNorm {
 
     /**
      * reducer
      */
-    public static class VectorMapper extends Mapper<Object, Text, Text, IntWritable>{
+    public static class VectorMapper extends Mapper<Object, Text, CustomKey, CustomValue>{
 
-        private final static IntWritable one = new IntWritable(1);
-        private Text word = new Text();
 
 	    /**
 	     *
@@ -41,25 +34,83 @@ public class VecNorm {
 	     * @param value
 	     * @param context
 	     */
-	    public void map(Object key, Text value, Context context){
+	    @Override
+        public void map(Object key, Text value, Context context)
+                throws IOException, InterruptedException{
 
+            StringTokenizer itr = new StringTokenizer(value.toString());
+
+            int vectorId = Integer.parseInt(itr.nextToken());
+            String vec = itr.nextToken();
+
+            String[] vals = vec.split(":");
+
+            int dimension = 0;
+            for (String v:vals){
+                int dimensionValue = Integer.parseInt(v);
+                context.write(new CustomKey(dimension, 0), new CustomValue(vectorId, dimensionValue));
+                context.write(new CustomKey(dimension, 1), new CustomValue(vectorId, dimensionValue));
+                dimension++;
+            }
 	    }
+    }
+
+    public static class CustomValue implements WritableComparable<CustomValue>{
+
+        private int vectorId;
+        private int dimensionValue;
+
+
+        public CustomValue(int vectorId, int dimensionValue) {
+            this.vectorId = vectorId;
+            this.dimensionValue = dimensionValue;
+        }
+
+        public int getVectorId() {
+            return vectorId;
+        }
+
+        public int getDimensionValue() {
+            return dimensionValue;
+        }
+
+        @Override
+        public void write(DataOutput dataOutput) throws IOException{
+            dataOutput.write(vectorId);
+            dataOutput.write(dimensionValue);
+        }
+
+        @Override
+        public void readFields(DataInput dataInput) throws IOException{
+            this.vectorId = dataInput.readInt();
+            this.dimensionValue = dataInput.readInt();
+        }
+
+        @Override
+        public int compareTo(CustomValue value){
+            return Integer.compare(this.dimensionValue, value.getDimensionValue());
+        }
     }
 
     public static class CustomKey implements WritableComparable<CustomKey>{
 
-        private int key1;
+        private int dimension;
         private int flag;
+
+        public CustomKey(int d, int f){
+            this.dimension = d;
+            this.flag = f;
+        }
 
         @Override
         public void write(DataOutput dataOutput) throws IOException{
-            dataOutput.write(key1);
+            dataOutput.write(dimension);
             dataOutput.write(flag);
         }
 
         @Override
         public void readFields(DataInput dataInput) throws IOException{
-            this.key1 = dataInput.readInt();
+            this.dimension = dataInput.readInt();
             this.flag = dataInput.readInt();
         }
 
@@ -68,27 +119,35 @@ public class VecNorm {
             return Integer.compare(this.flag, key.getFlag());
         }
 
+        /**
+         *
+         * @return int
+         */
         public int getFlag(){
             return this.flag;
         }
 
-        public int getKey1(){
-            return this.key1;
+        /**
+         *
+         * @return int
+         */
+        public int getDimension(){
+            return this.dimension;
         }
     }
 
-    public static class VectorPartitioner extends Partitioner<CustomKey, Text>{
+    public static class VectorPartitioner extends Partitioner<CustomKey, CustomValue>{
 
         @Override
-        public int getPartition(CustomKey key, Text value, int num){
-            return key.getKey1() % num;
+        public int getPartition(CustomKey key, CustomValue value, int num){
+            return key.getDimension() % num;
         }
     }
 
     /**
      *
      */
-    public static class VectorReducer extends Reducer<Text,IntWritable,Text,IntWritable> {
+    public static class VectorReducer extends Reducer<CustomKey,CustomValue,Text,IntWritable> {
 
 	    /**
 	     *
@@ -96,7 +155,18 @@ public class VecNorm {
 	     * @param values
 	     * @param context
 	     */
-	    public void reduce(Text key, Iterable<IntWritable> values, Context context){
+        @Override
+	    public void reduce(CustomKey key, Iterable<CustomValue> values, Context context)
+                throws InterruptedException, IOException{
+
+            int i = 1;
+
+            for (CustomValue cv:values){
+                context.write(
+                    new Text(Integer.toString(cv.getVectorId())),
+                    new IntWritable(cv.getDimensionValue())
+                );
+            }
 
 	    }
 
@@ -121,6 +191,9 @@ public class VecNorm {
         job.setReducerClass(VectorReducer.class);
         job.setMapperClass(VectorMapper.class);
         job.setPartitionerClass(VectorPartitioner.class);
+
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(IntWritable.class);
 
         FileInputFormat.addInputPath(job, new Path(otherArgs[0]));
         FileOutputFormat.setOutputPath(job, new Path(otherArgs[1]));
