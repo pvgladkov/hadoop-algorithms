@@ -155,8 +155,8 @@ public class VecNorm {
      */
     public static class VectorReducer extends Reducer<CustomKey,CustomValue,Text,Text> {
 
-        private int m;
-        private int M;
+        private int min;
+        private int max;
 
         private boolean isFirst;
 
@@ -185,24 +185,24 @@ public class VecNorm {
             if (key.getFlag() == 0){
                 for (CustomValue cv:values){
                     if (isFirst){
-                        m = cv.getDimensionValue();
-                        M = cv.getDimensionValue();
+                        min = cv.getDimensionValue();
+                        max = cv.getDimensionValue();
                         isFirst = false;
                     }
-                    if (m > cv.getDimensionValue()){
-                        m = cv.getDimensionValue();
+                    if (min > cv.getDimensionValue()){
+                        min = cv.getDimensionValue();
                     }
-                    if (M < cv.getDimensionValue()){
-                        M = cv.getDimensionValue();
+                    if (max < cv.getDimensionValue()){
+                        max = cv.getDimensionValue();
                     }
                 }
             }else {
                 for (CustomValue cv:values){
                     double newValue;
-                    if (m == M){
+                    if (min == max){
                        newValue = 1;
                     }else {
-                        newValue = (float)(cv.getDimensionValue() - m)/(M - m);
+                        newValue = (float)(cv.getDimensionValue() - min)/(max - min);
                     }
 
                     String str = Integer.toString(key.getDimension()) + ':' + Double.toString(newValue);
