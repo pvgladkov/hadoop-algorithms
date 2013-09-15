@@ -3,14 +3,11 @@ package org.apache.hadoop;
 
 import java.io.DataInput;
 import java.io.DataOutput;
-import java.io.EOFException;
 import java.io.IOException;
 import java.util.StringTokenizer;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.FloatWritable;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.mapreduce.Job;
@@ -122,6 +119,17 @@ public class VecNorm {
 
         @Override
         public int compareTo(CustomKey key){
+
+            int returnVal = Integer.compare(this.dimension, key.getDimension());
+            if(returnVal != 0){
+                return returnVal;
+            }
+            if(this.flag == 0){
+                return -1;
+            }else if(key.getFlag() == 0){
+                return 1;
+            }
+
             return Integer.compare(this.flag, key.getFlag());
         }
 
@@ -147,10 +155,17 @@ public class VecNorm {
      */
     public static class VectorReducer extends Reducer<CustomKey,CustomValue,Text,Text> {
 
-        private int m;
-        private int M;
+        private int min;
+        private int max;
 
-        private boolean isFirst = true;
+        private boolean isFirst;
+
+        private int p;
+
+        @Override
+        public void setup(Context context){
+            p = -1;
+        }
 
 	    /**
 	     *
@@ -162,30 +177,35 @@ public class VecNorm {
 	    public void reduce(CustomKey key, Iterable<CustomValue> values, Context context)
                 throws InterruptedException, IOException{
 
+            if (p != key.getDimension()){
+                isFirst = true;
+                p = key.getDimension();
+            }
+
             if (key.getFlag() == 0){
                 for (CustomValue cv:values){
                     if (isFirst){
-                        m = cv.getDimensionValue();
-                        M = cv.getDimensionValue();
+                        min = cv.getDimensionValue();
+                        max = cv.getDimensionValue();
                         isFirst = false;
                     }
-                    if (m > cv.getDimensionValue()){
-                        m = cv.getDimensionValue();
+                    if (min > cv.getDimensionValue()){
+                        min = cv.getDimensionValue();
                     }
-                    if (M < cv.getDimensionValue()){
-                        M = cv.getDimensionValue();
+                    if (max < cv.getDimensionValue()){
+                        max = cv.getDimensionValue();
                     }
                 }
             }else {
                 for (CustomValue cv:values){
-                    float newValue;
-                    if (m == M){
+                    double newValue;
+                    if (min == max){
                        newValue = 1;
                     }else {
-                        newValue = (cv.getDimensionValue() - m)/(M - m);
+                        newValue = (float)(cv.getDimensionValue() - min)/(max - min);
                     }
 
-                    String str = Integer.toString(key.getDimension()) + ':' + Float.toString(newValue);
+                    String str = Integer.toString(key.getDimension()) + ':' + Double.toString(newValue);
                     Text vec = new Text(str);
 
                     context.write(new Text(Integer.toString(cv.getVectorId())), vec);
