@@ -3,11 +3,13 @@ package org.apache.hadoop;
 
 import java.io.DataInput;
 import java.io.DataOutput;
+import java.io.EOFException;
 import java.io.IOException;
 import java.util.StringTokenizer;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.FloatWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
@@ -48,8 +50,9 @@ public class VecNorm {
             int dimension = 0;
             for (String v:vals){
                 int dimensionValue = Integer.parseInt(v);
-                context.write(new CustomKey(dimension, 0), new CustomValue(vectorId, dimensionValue));
-                context.write(new CustomKey(dimension, 1), new CustomValue(vectorId, dimensionValue));
+                CustomValue CV = new CustomValue(vectorId, dimensionValue);
+                context.write(new CustomKey(dimension, 0), CV);
+                context.write(new CustomKey(dimension, 1), CV);
                 dimension++;
             }
 	    }
@@ -60,6 +63,7 @@ public class VecNorm {
         private int vectorId;
         private int dimensionValue;
 
+        public CustomValue(){}
 
         public CustomValue(int vectorId, int dimensionValue) {
             this.vectorId = vectorId;
@@ -76,14 +80,14 @@ public class VecNorm {
 
         @Override
         public void write(DataOutput dataOutput) throws IOException{
-            dataOutput.write(vectorId);
-            dataOutput.write(dimensionValue);
+            dataOutput.writeInt(vectorId);
+            dataOutput.writeInt(dimensionValue);
         }
 
         @Override
         public void readFields(DataInput dataInput) throws IOException{
-            this.vectorId = dataInput.readInt();
-            this.dimensionValue = dataInput.readInt();
+            vectorId = dataInput.readInt();
+            dimensionValue = dataInput.readInt();
         }
 
         @Override
@@ -97,21 +101,23 @@ public class VecNorm {
         private int dimension;
         private int flag;
 
+        public CustomKey(){}
+
         public CustomKey(int d, int f){
-            this.dimension = d;
-            this.flag = f;
+            dimension = d;
+            flag = f;
         }
 
         @Override
         public void write(DataOutput dataOutput) throws IOException{
-            dataOutput.write(dimension);
-            dataOutput.write(flag);
+            dataOutput.writeInt(dimension);
+            dataOutput.writeInt(flag);
         }
 
         @Override
         public void readFields(DataInput dataInput) throws IOException{
-            this.dimension = dataInput.readInt();
-            this.flag = dataInput.readInt();
+            dimension = dataInput.readInt();
+            flag = dataInput.readInt();
         }
 
         @Override
@@ -119,20 +125,12 @@ public class VecNorm {
             return Integer.compare(this.flag, key.getFlag());
         }
 
-        /**
-         *
-         * @return int
-         */
         public int getFlag(){
-            return this.flag;
+            return flag;
         }
 
-        /**
-         *
-         * @return int
-         */
         public int getDimension(){
-            return this.dimension;
+            return dimension;
         }
     }
 
@@ -147,7 +145,12 @@ public class VecNorm {
     /**
      *
      */
-    public static class VectorReducer extends Reducer<CustomKey,CustomValue,Text,IntWritable> {
+    public static class VectorReducer extends Reducer<CustomKey,CustomValue,Text,Text> {
+
+        private int m;
+        private int M;
+
+        private boolean isFirst = true;
 
 	    /**
 	     *
@@ -159,17 +162,36 @@ public class VecNorm {
 	    public void reduce(CustomKey key, Iterable<CustomValue> values, Context context)
                 throws InterruptedException, IOException{
 
-            int i = 1;
+            if (key.getFlag() == 0){
+                for (CustomValue cv:values){
+                    if (isFirst){
+                        m = cv.getDimensionValue();
+                        M = cv.getDimensionValue();
+                        isFirst = false;
+                    }
+                    if (m > cv.getDimensionValue()){
+                        m = cv.getDimensionValue();
+                    }
+                    if (M < cv.getDimensionValue()){
+                        M = cv.getDimensionValue();
+                    }
+                }
+            }else {
+                for (CustomValue cv:values){
+                    float newValue;
+                    if (m == M){
+                       newValue = 1;
+                    }else {
+                        newValue = (cv.getDimensionValue() - m)/(M - m);
+                    }
 
-            for (CustomValue cv:values){
-                context.write(
-                    new Text(Integer.toString(cv.getVectorId())),
-                    new IntWritable(cv.getDimensionValue())
-                );
+                    String str = Integer.toString(key.getDimension()) + ':' + Float.toString(newValue);
+                    Text vec = new Text(str);
+
+                    context.write(new Text(Integer.toString(cv.getVectorId())), vec);
+                }
             }
-
 	    }
-
     }
 
     /**
@@ -193,7 +215,10 @@ public class VecNorm {
         job.setPartitionerClass(VectorPartitioner.class);
 
         job.setOutputKeyClass(Text.class);
-        job.setOutputValueClass(IntWritable.class);
+        job.setOutputValueClass(Text.class);
+
+        job.setMapOutputKeyClass(CustomKey.class);
+        job.setMapOutputValueClass(CustomValue.class);
 
         FileInputFormat.addInputPath(job, new Path(otherArgs[0]));
         FileOutputFormat.setOutputPath(job, new Path(otherArgs[1]));
